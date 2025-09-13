@@ -1,0 +1,60 @@
+#!/bin/bash
+# This file exists to be `PATH_add`-ed in the .envrc
+
+set -euo pipefail
+[[ -n "${DEBUG:-}" ]] && set -x
+
+LIPC_TEST_LOCAL=true
+# default to kpw6
+LIPC_TEST_TARGET=kpw6
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --help|-h)
+      echo "Usage: run [--local|-l]"
+      echo "Runs the lipc-test binary with go run"
+      exit 0
+      ;;
+    --target|-t)
+      shift
+      if [[ $# -eq 0 ]] || [[ ! "$1" =~ ^[a-zA-Z0-9._].+$ ]]; then
+        LIPC_TEST_LOCAL=false
+      else
+        export LIPC_TEST_TARGET="$1"
+        shift
+      fi
+      ;;
+    --sudo|-S)
+      export LIPC_TEST_SUDO=true
+      shift
+      ;;
+    *)
+      echo "Unknown argument: $1"
+      exit 1
+      ;;
+  esac
+done
+
+out_path=$(mktemp)
+trap 'rm -f "$out_path"' EXIT
+
+function build() {
+  go build -v -o "$out_path" ./cmd/lipc-test/main.go
+  echo "$out_path"
+}
+
+# easy mode!
+if [[ "$LIPC_TEST_LOCAL" == true ]]; then
+  unset CC PKG_CONFIG_PATH GOARCH
+  out_path=$(build)
+  if [[ -n "${LIPC_TEST_SUDO:-}" ]]; then
+    exec sudo "$out_path"
+  fi
+  exec "$out_path"
+fi
+
+# If we're here, we need to cross compile, scp, and run.
+go build -o "$out_path" ./cmd/lipc-test/main.go
+
+scp "$out_path" root@"$LIPC_TEST_TARGET":/mnt/us/lipc-test
+ssh -t root@"$LIPC_TEST_TARGET" "bash -lc 'DEBUG=${DEBUG:-} /mnt/us/lipc-test'"
